@@ -1,0 +1,8 @@
+"Variable","IRR","CI_low","CI_high","p_value"
+"age",1.007,1.005,1.008,0
+"urgency_labelElective",0.79,0.717,0.869,0
+"urgency_labelNot assigned",0.976,0.917,1.038,0.438
+"num_diagnoses",1.077,1.072,1.082,0
+"prearranged_overnight",0.927,0.818,1.051,0.235
+"referral_labelTransfer in",0.724,0.567,0.924,0.009
+"referral_labelAccident/Emergency",0.702,0.547,0.9,0.005
