@@ -1,21 +1,93 @@
-# Explanatory Modelling of Hospital Length of Stay: A DRG-Adjusted Analysis
+# Why Do Some Patients Stay Longer Than Their Diagnosis Explains?
 
-A self-directed data science project analyzing what drives inpatient length of stay (LOS) beyond clinical case mix, using a de-identified Australian Hospital Casemix Protocol (HCP)-style dataset. The goal was not just to build a model, but to make every analytical decision — what to include, what to exclude, which model to trust — explicit and defensible.
+A DRG-adjusted analysis of hospital length of stay (LOS), built on a de-identified Australian Hospital Casemix Protocol (HCP)-style dataset: 6,596 inpatient episodes, one hospital, one year.
 
-**Stack:** R (dplyr, lme4, lmerTest, performance, ggplot2) · Linear mixed-effects modelling · Sensitivity analysis
-
----
-
-## TL;DR
-
-- **Question:** After adjusting for how sick a patient is (DRG / case mix), what else independently predicts how long they stay in hospital?
-- **Approach:** Cleaned 6,596 inpatient episodes, ran structured EDA, then fit a log-linear mixed-effects model with a random intercept for DRG — chosen over both a no-DRG baseline and a fully-saturated fixed-DRG model after explicitly comparing all three on AIC, R², and parameter cost.
-- **Headline result:** DRG alone explains ~50% of LOS variance (ICC ≈ 0.50). Within that, three levers are still operationally actionable: **comorbidity burden** (+7.4% LOS per additional diagnosis), **unplanned admissions** (prearranged overnight admissions are 8.5% shorter), and **evening arrivals** (6–10pm admissions run 5–6% longer, likely because same-day medical review and discharge planning slip to the next day).
-- **Why it matters:** This turns "our LOS is high" into a decomposable, risk-adjusted story — separating what's driven by patient complexity (not fixable) from what's driven by process (fixable).
+**Stack:** R (dplyr, lme4, lmerTest, performance, ggplot2) · log-linear mixed-effects model with a random intercept for DRG
 
 ---
 
-## Repository Structure
+## How big is the problem
+
+Length of stay is one of the largest controllable costs in a hospital. Every unexplained extra day is a bed another patient couldn't use, plus added risk for the one occupying it. This hospital's inpatient episodes consume roughly **20,400 bed days a year**.
+
+Not all of that is inefficiency: some patients are genuinely sicker, and DRG (Diagnosis Related Group) is the standard way to account for that. Once you do, **DRG case mix explains about half of the variation in LOS (ICC ≈ 0.50)**, and that half isn't fixable, so it shouldn't be scored as a performance problem. Compare raw LOS across wards or time periods without adjusting for it, and half of what you're seeing is just which patients they happened to treat.
+
+**The question this analysis answers:** once you've adjusted for how sick a patient is, what's still driving how long they stay in the other half, and which parts of *that* can a hospital actually change?
+
+---
+
+## The key findings
+
+Three things in the unexplained half are specific enough to act on. The decision boundary is the "Controllable?" column: only two of the three are levers a hospital can actually pull.
+
+| Driver | Effect (DRG-adjusted) | Controllable? | Scale |
+|---|---|---|---|
+| Comorbidity burden | +7.4% LOS per additional diagnosis | No, it's case mix | Not a savings target; its value is making benchmarking risk-adjusted |
+| Unplanned vs. prearranged pathway | Prearranged episodes run 8.5% shorter | Yes, for patients who could be scheduled in advance | Up to ~880 bed days/year *if* fully realized (upper bound, see Risks) |
+| Evening arrival (6–10pm) | +5–6% LOS vs. morning arrivals | Yes, admission-time process | ~125 to 150 bed days/year (~38 to 45 extra episodes' worth of capacity at this hospital's average 3.3-day stay) |
+
+All three are about how the system responds to them, which is exactly what makes the controllable two actionable.
+
+Bed days are the unit used throughout because cost/per-diem data isn't in this dataset. Converting to dollars is a one-line multiplication once you apply your own per-diem rate; converting to capacity, a rough proxy, is bed days divided by the ~3.3-day average LOS.
+
+---
+
+## What to do about it
+
+**1. Fix the evening-admission gap.**
+Patients admitted 6–10pm stay 5–6% longer than morning admissions, DRG and urgency held constant; night arrivals (after 10pm) show no such effect, so this isn't just "later is worse." Likely cause: they miss the same-day window for medical review and discharge planning, and that work slides to the next morning.
+→ Review the evening admission workflow to confirm where the delay actually sits.
+→ If it's confirmed as process rather than clinical necessity, standardise an admission-time checklist that front-loads the review and discharge-planning trigger, instead of waiting for the next day's round.
+→ **~589 evening admissions/year, consuming ~2,500 bed days/year.** Even a 5% cut in their LOS frees **~125 bed days/year**; 6% frees **~150**.
+
+**2. Separate risk-adjusted benchmarks for elective vs. emergency admissions.**
+Raw LOS comparisons across wards, clinicians, or time periods are currently comparing different patient populations, not different performance: DRG alone explains ~50% of the spread. "Not assigned" urgency patients should be benchmarked against emergency admissions for now (75% of them arrive via A&E or transfer, the same channels), while a coding audit runs on that field in parallel.
+→ **Commercial payoff:** fair cost comparisons and outlier flags that survive scrutiny, including in insurer negotiations on per-diem outlier compensation.
+
+**3. Case-review the 7 F41B outliers, not a policy change.**
+Within DRG F41B (cardiac rhythm), 7 patients this year stayed far longer than the model expected, and unlike the other outlier-heavy DRGs, they weren't older or more complex than the rest of F41B. That rules out the clinical explanation and points at something process- or case-specific.
+→ Seven cases is too small to justify a system-wide fix, but exactly the right size for a targeted clinical review to find out what actually happened, and whether it recurs.
+
+**4. Where the elective pathway has room, it's the biggest lever of the four, on paper.** Episodes booked in advance run meaningfully shorter than otherwise-similar unplanned ones. If a material share of the roughly 4,200 currently-unplanned elective admissions a year could realistically be moved earlier in the pathway, closing even part of that gap is worth up to ~880 bed days/year, several times the evening-admission fix. That "if" is a clinical operations question this dataset can't answer on its own, which is why it's listed last rather than first, and why the number above is a ceiling, not a forecast.
+
+---
+
+## Risks and what's next
+
+What could make these numbers wrong, and what would resolve each one:
+
+- **No ICU data.** ICU episodes are partly absorbed into higher-acuity DRGs via the random intercept, but within a DRG, ICU-vs-not is invisible to this model; read estimates for high-acuity DRGs (e.g. E62A) with that caveat. *Next step: add ICU flag/days if it becomes available.*
+- **Single hospital, one-year window.** No cross-site or temporal-stability check yet. *Next step: train on the earlier months, validate on the later ones, and confirm the three effect sizes hold.*
+- **The elective-pathway lever (#4) is a hypothesis, not a validated saving.** The 8.5% effect is real and DRG-adjusted, but converting it into "X admissions could realistically move pathway" needs clinical input this dataset doesn't contain. *Next step: a scoping conversation with clinical ops on which currently-unplanned elective admissions could genuinely be scheduled in advance.*
+- **"Not assigned" urgency is a coding gap, not a confirmed process fix.** Benchmarking it against emergency admissions is a reasonable interim proxy (75% of it shares emergency's referral pathways), not a permanent answer. *Next step: audit the urgency field directly.*
+- **Comorbidity effect modelled as linear**, though EDA showed acceleration above ~7 diagnoses. *Next step: a spline term, worth doing if this ever moves toward individual-level benchmarking rather than population-level effects.*
+- **F41B is 7 episodes: a lead, not a finding.** *Next step: the case review itself; if a recurring cause turns up, it becomes a policy recommendation.*
+
+---
+
+## How much to trust the numbers above
+
+**Dataset.** De-identified private-hospital inpatient data, HCP format, June 2022 to June 2023, N = 6,596 overnight episodes after excluding same-day (LOS is administratively ~zero for those, a different pathway rather than a shorter version of the same one). No ICU data; see Risks above.
+
+**DRG really does explain about half the variance (ICC ≈ 0.50).** This is the number that justifies risk-adjusted benchmarking in the first place: compare raw LOS across wards or periods without adjusting for case mix, and half of what you're seeing is just which patients they happened to treat, not performance.
+
+**Model chosen by explicit comparison, not by default.**
+
+| Model | Params | AIC | R² | |
+|---|---|---|---|---|
+| No DRG adjustment | ~10 | 12,440 | 0.40 | clearly missing something large |
+| **DRG as random intercept** | **28** | **9,310** | **0.63** | **chosen: 87% of the AIC gain for 6% of the parameter cost** |
+| DRG as fixed effect (dummy per DRG) | 501 | 8,854 | 0.68 | marginal gain, can't handle DRGs with 1–3 patients, overfitting risk |
+
+Outcome modelled as `log(LOS)`. LOS is heavily right-skewed (median 2 days, mean 3.3, max 69), and logging turns coefficients into percentage effects, which is how the findings above are stated.
+
+**Three headline effects held up across every check that could break them:** alternative variable sets, a negative-binomial specification (fixed DRG effects, since some DRGs are too sparse for a random effect), and merging sparse DRGs into an "Other" bucket. Comorbidity count, prearranged pathway, and evening admission stayed significant with similar effect sizes in all five sensitivity analyses. Full detail in [`report/presentation_script.md`](report/presentation_script.md), Q&A section.
+
+**Diagnostics are honest, not just clean.** Residuals behave well for typical cases; the most extreme stays have more error, which is expected given the outcome's skew and acceptable because the model is estimating average effects, not individual predictions.
+
+---
+
+## Repository structure
 
 ```
 portfolio/
@@ -26,7 +98,7 @@ portfolio/
 │   └── df_clean.rds                   # cleaned analysis dataset (generated by 01_eda.R)
 ├── scripts/
 │   ├── 01_eda.R                # cleaning, recoding, exploratory analysis
-│   └── 02_model.R               # model comparison, final model, sensitivity analyses
+│   └── 02_model.R              # model comparison, final model, sensitivity analyses
 ├── plots/                      # all generated figures (EDA + model diagnostics)
 └── report/
     └── presentation_script.md  # full narrative walkthrough + anticipated Q&A
@@ -36,141 +108,6 @@ portfolio/
 
 ---
 
-## 1. Business Question & Hypothesis
+## Why this project
 
-Length of stay drives bed occupancy, staffing cost, and care risk — every day that can't be explained by clinical need is a day that's costing money and adding risk. But not all long stays are inefficiency; some patients are simply sicker. DRG (Diagnosis Related Group) is the standard way to account for that.
-
-**Hypothesis:** even after adjusting for DRG, patient-level factors (age, comorbidity count) and operational factors (admission timing, referral pathway, how the admission was arranged) still independently affect LOS — and if true, the operational factors are things a hospital can actually act on.
-
-This was framed from the start as an **explanatory** model (which factors matter, and by how much) rather than a predictive one (forecasting an individual patient's exact stay) — that framing drove every downstream choice, from model family to diagnostic standards.
-
----
-
-## 2. Dataset
-
-- De-identified private-hospital inpatient episode data in Australian HCP format, June 2022 onward.
-- After cleaning (overnight + same-day-arranged episodes only, LOS 0–365 days, age 0–110): **N = 6,596 episodes**.
-- No ICU episodes recorded (flagged as a limitation); CCU present in 679 episodes (10.3%).
-- **Why exclude same-day (non-arranged) episodes:** their LOS is administratively fixed near zero — it reflects scheduling, not clinical need, and would just inject noise into a model built to explain clinical/operational variation.
-
-What makes this dataset useful for the question: it combines patient demographics, clinical case-mix data (DRG, diagnosis counts), admission/referral metadata, and insurer information in one place — which is exactly the mix needed to separate "sicker patient" from "slower process."
-
----
-
-## 3. Exploratory Analysis — What the Data Showed Before Any Modelling
-
-Full detail and plots in `scripts/01_eda.R` and `plots/`. Key patterns that directly shaped the model:
-
-**Comorbidity is the strongest single signal.** LOS rises with number of diagnoses, accelerating sharply above ~7 diagnoses (median 8 days at 11+). Modelled as continuous rather than binned.
-
-**DRG case-mix explains about half of all LOS variance.** Median LOS varies widely across DRGs, and small DRGs (2–3 patients) are too sparse to estimate reliably on their own — this single fact is what motivated treating DRG as a random effect rather than a fixed one (see §4).
-
-**"Not assigned" urgency behaves like emergency, not its own category.** ~75% of these patients came through A&E or transfer referral pathways — the same channels as recorded emergency admissions — suggesting a coding gap in the urgency field rather than a genuinely distinct patient group. Kept as its own factor level rather than merged, to avoid overwriting a real (if mislabeled) signal.
-
-**Referral source separates cleanly by LOS:** Transfer-in (mean 5.3d) and A&E (mean 4.8d) run roughly double the LOS of GP/Medical-Practitioner referrals (mean 2.5d) — a real, clinically-sensible gradient, not noise.
-
-**Admission timing matters, but not linearly:** night admissions (mean 4.8d) run nearly double morning admissions (mean 2.5d) in the raw data — the model later isolates the evening (not night) window as the actionable part of this effect once DRG and urgency are controlled for.
-
-**Care type creates structurally different LOS groups** (Palliative median 7d, Newborn 4d, Acute 2d) — had to be controlled for, or it would distort every other coefficient.
-
----
-
-## 4. Variable Selection — Decision Log
-
-Every variable in the final model earned its place on three criteria: **clinical plausibility**, **an EDA-observed pattern**, and **no redundancy with a variable already in the model**. What got dropped is as informative as what got kept:
-
-| Decision | Reasoning |
-|---|---|
-| **Dropped** `PrincipalDiagnosis` | 1,035 categories, highly collinear with DRG; DRG carries the same signal more efficiently |
-| **Dropped** `transfer_in` flag | Cramér's V = 1.0 with `referral_label` — perfectly collinear, pure redundancy |
-| **Dropped** discharge-time variables (`DischargeIntention`, `ModeOfSeparation`, `TransferOutProviderNumber`) | These are decided *during* the stay or *at* discharge — using them to explain LOS is data leakage, not explanation |
-| **Kept** `referral_label` over `!is.na(TransferInProviderNumber)` | The coarser flag collapses Transfer-in (mean 5.3d) and A&E (mean 4.8d) into one bucket, hiding a real 0.5-day gap between two clinically distinct pathways |
-| **Kept both** `referral_label` and `urgency_label` despite Cramér's V = 0.541 | Correlated but not redundant — VIF stayed under 5, and they capture genuinely different information (how the patient arrived vs. how urgent the admission was classified) |
-| **Tested, not included**: CCU flag | CCU signal is concentrated in ~10 cardiac DRGs — its explanatory power is already absorbed by the DRG random effect. Confirmed via sensitivity analysis (§6) that adding it barely moves AIC or coefficients |
-| **Tested, not included**: theatre time | Checked whether procedure duration explains LOS *beyond* DRG — see SA5 in §6 |
-
-All retained variables passed a VIF check (< 5 for every one — the danger case, `transfer_in`, had already been removed for being perfectly collinear).
-
-A backward stepwise selection (`lmerTest::step`, Satterthwaite F-tests) confirmed all 9 fixed effects were worth keeping — none were redundant once DRG was in the model as a random effect.
-
----
-
-## 5. Model Selection — Comparing Three Structures Before Committing
-
-This was the central methodological decision, and it was made by comparison, not by default.
-
-| Model | Fixed params | AIC | R² | Note |
-|---|---|---|---|---|
-| No DRG adjustment | ~10 | 12,440 | 0.404 (adj.) | Clearly missing something large |
-| **DRG as random intercept `(1\|DRG)`** | **28** | **9,310** | **0.628 (conditional)** | **Chosen model** |
-| DRG as fixed effect (dummy per DRG) | 501 | 8,854 | 0.677 (adj.) | Marginal AIC gain for 18× the parameters |
-
-**Why the random effect won:** the fixed-DRG model recovers only a small additional AIC improvement over 473 extra parameters — a textbook overfitting trade, and it can't handle DRGs with only 1–3 patients (their fixed-effect estimate would be entirely determined by 1–3 people). The random intercept instead *shrinks* sparse DRGs toward the global mean automatically — a form of built-in regularization — while large DRGs (300+ episodes) are barely shrunk at all, so they still "speak for themselves." Conceptually, DRG is a grouping variable we want to account for the spread of, not 473 separate effects we want to estimate individually.
-
-Outcome variable: `log(LOS)`, chosen because LOS is heavily right-skewed (median 2 days, mean 3.3, max 69) — logging stabilizes variance and turns coefficients into interpretable **percentage effects** (e.g. "+7.4% LOS per diagnosis"), which is a much more natural way to communicate results to a non-statistical audience than raw day counts.
-
----
-
-## 6. Model Performance & Robustness
-
-- **Marginal R² = 0.271** (fixed effects alone) · **Conditional R² = 0.628** (fixed effects + DRG random effect)
-- **ICC ≈ 0.49–0.50**: essentially half of all LOS variance sits *between* DRGs. This is the number that justifies risk-adjusted benchmarking — comparing raw LOS across wards or time periods without adjusting for case mix is comparing different patient populations, not different performance.
-- **Diagnostics:** residuals behave well for the typical case; the extreme right tail (very long stays) has more error than the center — expected given the outcome's skew, and acceptable because the model's job is explaining average effects, not predicting individual stays.
-
-**Five sensitivity analyses (SA1–SA5)** were run specifically to stress-test the two weakest fixed effects (`insurer_group`, p = 0.016; `prearranged_overnight`, p = 0.010) and the modelling choices themselves:
-
-| SA | What it tests | Result |
-|---|---|---|
-| SA1 | Add CCU flag | Coefficients and AIC essentially unchanged → CCU signal already captured by DRG |
-| SA2 | Merge DRGs with < 10 patients into "Other" | Confirms sparse-DRG shrinkage isn't distorting results |
-| SA3 | Remove `prearranged_overnight` | Tests sensitivity to dropping the weakest predictor |
-| SA4 | Negative Binomial GLM (fixed DRG) instead of log-normal LME | Poisson was overdispersed, NB was not — confirms the distributional choice, and key effects (age, diagnoses, urgency) stayed stable in direction and size |
-| SA5 | Add theatre time (`had_theatre`, `theatre_min`) | Tests whether procedure duration explains LOS beyond what DRG already captures |
-
-Across every specification, the three headline effects (comorbidity, prearranged admission, evening admission) stayed significant with similar effect sizes — that stability is what makes them recommendation-worthy rather than model artifacts.
-
----
-
-## 7. Outlier Analysis — Turning "Long Stay" into "Explained or Unexplained"
-
-Defined outliers as LOS > 2× the DRG-specific median → **379 episodes (5.7%)**, above the typical private-hospital benchmark of <3%.
-
-Rather than stopping at "these are long," each high-outlier-rate DRG was profiled outlier-vs-non-outlier on age and diagnosis count:
-
-- **E62A, I03B, I13B, J06A** — outliers were meaningfully older and had more diagnoses (e.g. I13B: age 60.3 vs 43.3) → **clinically expected**, not an efficiency problem. This framing is directly useful for insurer negotiations on per-diem outlier compensation.
-- **F41B — the exception.** Outlier patients were *younger* (64.9 vs 68.6) with only slightly more diagnoses. No clinical story explains the extra time → flagged as a **targeted case review**, not a policy change (n=7 is far too small for a statistical claim, but exactly right for a clinical conversation).
-
-This distinction — clinically-driven vs. process-driven — is the thread that connects the outlier analysis to the final recommendations.
-
----
-
-## 8. Key Findings
-
-1. **Comorbidity burden:** +7.4% LOS per additional diagnosis, independent of DRG, age, and urgency. Enables risk-adjusted benchmarking instead of raw LOS comparisons.
-2. **Pathway planning:** prearranged overnight admissions are 8.5% shorter than unplanned ones — even after controlling for DRG and urgency. This is about *how* the admission was arranged, not who the patient is — i.e. actionable.
-3. **Admission timing:** 6–10pm admissions run 5–6% longer; admissions after 10pm show *no* extra effect once DRG is controlled for. Interpretation: evening arrivals miss the same-day medical-review/discharge-planning window and that work slides to the next day, while late-night arrivals are mostly higher-acuity cases already on structured overnight protocols.
-4. Sex was not significant after case-mix adjustment. Insurer remained a (weak) significant control, most plausibly standing in for unmeasured socioeconomic factors rather than a causal insurer effect.
-
----
-
-## 9. Recommendations
-
-1. **Separate, risk-adjusted benchmarks for elective vs. emergency admissions** (with "Not assigned" temporarily benchmarked against emergency, given its referral-pathway profile, while a coding audit runs in parallel). *Commercial: fairer cross-unit/cross-period cost comparisons.*
-2. **An admission checklist triggered for 6–10pm arrivals**, front-loading discharge planning and required reviews at admission rather than letting them slip to the next morning. *Operational: fewer bed-days lost to a process gap, not a clinical one.*
-3. **A targeted case review of the 7 F41B outlier episodes** — small enough for a clinical conversation, not a policy change; the point is confirming whether it's a one-off or a repeatable process issue. *Patient care: finds the actual cause of an unexplained long stay.*
-
-Ordered deliberately from system-level (benchmarking) → operational (protocol) → individual (case review) — matching the scope of evidence behind each one.
-
----
-
-## 10. Limitations
-
-- **No ICU data.** ICU episodes are partly absorbed into higher-acuity DRGs via the random intercept, but within-DRG ICU-vs-non-ICU variation is invisible to this model — estimates for high-acuity DRGs (e.g. E62A) should be read with that caveat.
-- **Single hospital, single time window** — no cross-site or temporal-stability validation yet. A natural next step would be training on an earlier period and validating on a later one.
-- **Comorbidity effect modelled as linear.** EDA showed acceleration above ~7 diagnoses; a spline/quadratic term is a reasonable next iteration if the model moves toward individual-level benchmarking.
-
----
-
-## Why This Project
-
-I wanted a project that shows the *decision trail*, not just a final model — which variables I ruled out and why, why I chose a random effect over a much-better-fitting fixed-effect model, and how I used sensitivity analysis to decide which findings were trustworthy enough to act on. The full walkthrough (with anticipated Q&A on every methodological choice) is in [`report/presentation_script.md`](report/presentation_script.md).
+I wanted something that reads like a decision document, not a lab report: the answer up front, the payoff in bed days rather than a coefficient, and the methodology available for anyone who wants to check the work rather than forced on everyone up front. The full modelling walkthrough, every variable I ruled out and why, and anticipated Q&A on each choice, is in [`report/presentation_script.md`](report/presentation_script.md).
